@@ -2178,7 +2178,7 @@ If DEFAULT is non-nil, use this as the default value instead of
 ;;;; Ad-hoc manipulation
 
 ;;;###autoload
-(defun magit-update-ref (tag dest)
+(defun magit-update-ref-head (tag dest)
   "Just like update-ref <branch> <commit>, but automatically prefixes
 <branch> with refs/heads/ to avoid trouble."
   (interactive (list (magit-read-local-branch-or-ref "Ref to move")
