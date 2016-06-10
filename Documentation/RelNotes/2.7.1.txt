@@ -20,6 +20,8 @@ Changes since v2.7.0
 
 * Added new command `magit-branch-orphan'.
 
+* Added new command `magit-log-move-to-parent'.
+
 Fixes since v2.7.0
 ------------------
 
