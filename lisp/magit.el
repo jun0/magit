@@ -1197,7 +1197,7 @@ existing one."
 
 (defvar magit-find-file-hook nil)
 
-(defun magit-find-file-noselect (rev file)
+(defun magit-find-file-noselect (rev file &optional encoding)
   "Read FILE from REV into a buffer and return the buffer.
 FILE must be relative to the top directory of the repository."
   (let ((topdir (magit-toplevel)))
@@ -1205,9 +1205,12 @@ FILE must be relative to the top directory of the repository."
       (setq file (file-relative-name file topdir)))
     (or (magit-get-revision-buffer rev file)
         (with-current-buffer (magit-get-revision-buffer-create rev file)
-          (let ((inhibit-read-only t))
+          (let ((inhibit-read-only t)
+                (process-coding-system-alist
+                 `(("git" . ,(or encoding 'undecided)))))
             (erase-buffer)
-            (magit-git-insert "cat-file" "-p" (concat rev ":" file)))
+            (magit-git-insert "cat-file" "-p" (concat rev ":" file))
+            (setq buffer-file-coding-system last-coding-system-used))
           (setq magit-buffer-revision  (magit-rev-format "%H" rev)
                 magit-buffer-refname   rev
                 magit-buffer-file-name (expand-file-name file topdir))
@@ -1225,7 +1228,7 @@ FILE must be relative to the top directory of the repository."
 
 (defvar magit-find-index-hook nil)
 
-(defun magit-find-file-index-noselect (file &optional revert)
+(defun magit-find-file-index-noselect (file &optional revert encoding)
   "Read FILE from the index into a buffer and return the buffer.
 FILE must to be relative to the top directory of the repository."
   (let* ((bufname (concat file ".~{index}~"))
@@ -1238,9 +1241,11 @@ FILE must to be relative to the top directory of the repository."
               (temp (car (split-string
                           (or (magit-git-string "checkout-index" "--temp" file)
                               (error "Error making temp file"))
-                          "\t"))))
+                          "\t")))
+              (coding-system-for-read encoding))
           (erase-buffer)
           (insert-file-contents temp nil nil nil t)
+          (setq buffer-file-coding-system last-coding-system-used)
           (delete-file temp)))
       (setq magit-buffer-revision  "{index}"
             magit-buffer-refname   "{index}"
@@ -1266,8 +1271,9 @@ is done using `magit-find-index-noselect'."
               (buffer (current-buffer)))
           (when magit-wip-before-change-mode
             (magit-wip-commit-before-change (list file) " before un-/stage"))
-          (with-temp-file index
-            (insert-buffer-substring buffer))
+          (let ((coding-system-for-write buffer-file-coding-system))
+            (with-temp-file index
+              (insert-buffer-substring buffer)))
           (magit-call-git "update-index" "--cacheinfo"
                           (substring (magit-git-string "ls-files" "-s" file) 0 6)
                           (magit-git-string "hash-object" "-t" "blob" "-w"
