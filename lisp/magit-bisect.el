@@ -55,7 +55,8 @@
                         (?g "Good"         magit-bisect-good)
                         (?k "Skip"         magit-bisect-skip)
                         (?r "Reset"        magit-bisect-reset)
-                        (?s "Run script"   magit-bisect-run))
+                        (?s "Run script"   magit-bisect-run)
+                        (?L "Show log"     magit-bisect-visualize-log))
   :sequence-predicate 'magit-bisect-in-progress-p)
 
 ;;;###autoload
@@ -75,6 +76,13 @@ other actions from the bisect popup (\
 (defun magit-bisect-start-read-args ()
   (let  ((b (magit-read-branch-or-commit "Start bisect with bad revision")))
     (list b (magit-read-other-branch-or-commit "Good revision" b))))
+
+;;;###autoload
+(defun magit-bisect-visualize-log ()
+  "Show log of remaining commits to bisect."
+  (interactive)
+  (magit-log '("--bisect") (default-value 'magit-log-arguments)
+             (magit-file-lines (magit-git-dir "BISECT_NAMES"))))
 
 ;;;###autoload
 (defun magit-bisect-reset ()

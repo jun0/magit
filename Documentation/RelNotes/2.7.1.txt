@@ -25,6 +25,8 @@ Changes since v2.7.0
 
 * Added new command `magit-branch-orphan'.
 
+* Added new command `magit-bisect-visualize-log'.
+
 Fixes since v2.7.0
 ------------------
 
