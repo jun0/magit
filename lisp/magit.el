@@ -1198,15 +1198,14 @@ existing one."
 
 (defun magit-revert-rev-file-buffer (_ignore-auto noconfirm)
   (when (or noconfirm
-            (or noconfirm
-                (and (not (buffer-modified-p))
-                     (catch 'found
-                       (dolist (regexp revert-without-query)
-                         (when (string-match regexp magit-buffer-file-name)
-                           (throw 'found t)))))
-                (yes-or-no-p (format "Revert buffer from git %s? "
-                                     (if (equal magit-buffer-refname "") "{index}"
-                                       (concat "revision " magit-buffer-refname))))))
+            (and (not (buffer-modified-p))
+                 (catch 'found
+                   (dolist (regexp revert-without-query)
+                     (when (string-match regexp magit-buffer-file-name)
+                       (throw 'found t)))))
+            (yes-or-no-p (format "Revert buffer from git %s? "
+                                 (if (equal magit-buffer-refname "") "{index}"
+                                   (concat "revision " magit-buffer-refname)))))
     (let* ((inhibit-read-only t)
            (default-directory (magit-toplevel))
            (file (file-relative-name magit-buffer-file-name))
