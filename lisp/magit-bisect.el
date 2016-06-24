@@ -82,7 +82,8 @@ other actions from the bisect popup (\
   "Show log of remaining commits to bisect."
   (interactive)
   (magit-log '("--bisect") (default-value 'magit-log-arguments)
-             (magit-file-lines (magit-git-dir "BISECT_NAMES"))))
+             (split-string (magit-file-line (magit-git-dir "BISECT_NAMES"))
+                           nil nil "'")))
 
 ;;;###autoload
 (defun magit-bisect-reset ()
