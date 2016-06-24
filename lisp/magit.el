@@ -1227,9 +1227,9 @@ existing one."
   "Read FILE from REV into a buffer and return the buffer.
 FILE must be relative to the top directory of the repository.
 An empty REV stands for index."
-  (let ((default-directory (magit-toplevel)))
+  (let ((topdir (magit-toplevel)))
     (when (file-name-absolute-p file)
-      (setq file (file-relative-name file)))
+      (setq file (file-relative-name file topdir)))
     (with-current-buffer (magit-get-revision-buffer-create rev file)
       (when (or (not magit-buffer-file-name)
                 (if (eq revert 'ask-revert)
@@ -1239,7 +1239,8 @@ An empty REV stands for index."
         (setq magit-buffer-revision
               (if (string= rev "") "{index}" (magit-rev-format "%H" rev))
               magit-buffer-refname rev
-              magit-buffer-file-name (expand-file-name file))
+              magit-buffer-file-name (expand-file-name file topdir))
+        (setq default-directory (file-name-directory magit-buffer-file-name))
         (setq-local revert-buffer-function #'magit-revert-rev-file-buffer)
         (revert-buffer t t)
         (run-hooks hookvar))
