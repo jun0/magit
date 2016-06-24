@@ -25,6 +25,9 @@ Changes since v2.7.0
 
 * Added new command `magit-branch-orphan'.
 
+* Added support for globbing in file arguments of diff and log
+  commands.
+
 Fixes since v2.7.0
 ------------------
 
