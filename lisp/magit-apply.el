@@ -1,6 +1,6 @@
 ;;; magit-apply.el --- apply Git diffs  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2010-2016  The Magit Project Contributors
+;; Copyright (C) 2010-2017  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -36,22 +36,28 @@
 
 ;; For `magit-apply'
 (declare-function magit-am-popup 'magit-sequence)
+(declare-function magit-patch-apply-popup 'magit-files)
 ;; For `magit-discard-files'
 (declare-function magit-checkout-stage 'magit)
 (declare-function magit-checkout-read-stage 'magit)
 (defvar auto-revert-verbose)
 ;; For `magit-stage-untracked'
 (declare-function magit-submodule-add 'magit-submodule)
-(declare-function magit-submodule-read-name 'magit-submodule)
+(declare-function magit-submodule-read-name-for-path 'magit-submodule)
 
 (require 'dired)
 
 ;;; Options
 
 (defcustom magit-delete-by-moving-to-trash t
-  "Whether Magit uses the system's trash can."
+  "Whether Magit uses the system's trash can.
+
+You should absolutely not disable this and also remove `discard'
+from `magit-no-confirm'.  You shouldn't do that even if you have
+all of the Magit-Wip modes enabled, because those modes do not
+track any files that are not tracked in the proper branch."
   :package-version '(magit . "2.1.0")
-  :group 'magit
+  :group 'magit-essentials
   :type 'boolean)
 
 (defcustom magit-unstage-committed t
@@ -63,7 +69,7 @@ between the index and the working tree, not with committed
 changes.
 
 If this option is non-nil (the default), then typing \"u\"
-(`magit-unstage') on a committed change, causes it to be
+\(`magit-unstage') on a committed change, causes it to be
 reversed in the index but not the working tree.  For more
 information see command `magit-reverse-in-index'."
   :package-version '(magit . "2.4.1")
@@ -99,6 +105,7 @@ so causes the change to be applied to the index as well."
       (`(,_ region) (magit-apply-region it args))
       (`(,_   hunk) (magit-apply-hunk   it args))
       (`(,_  hunks) (magit-apply-hunks  it args))
+      (`(rebase-sequence file) (magit-patch-apply-popup))
       (`(,_   file) (magit-apply-diff   it args))
       (`(,_  files) (magit-apply-diffs  it args)))))
 
@@ -170,7 +177,7 @@ so causes the change to be applied to the index as well."
       (magit-refresh))))
 
 (defun magit-apply--get-selection ()
-  (or (magit-region-sections 'hunk 'file)
+  (or (magit-region-sections '(hunk file) t)
       (let ((section (magit-current-section)))
         (pcase (magit-section-type section)
           ((or `hunk `file) section)
@@ -196,18 +203,19 @@ so causes the change to be applied to the index as well."
 With a prefix argument, INTENT, and an untracked file (or files)
 at point, stage the file but not its content."
   (interactive "P")
-  (--when-let (magit-apply--get-selection)
-    (pcase (list (magit-diff-type) (magit-diff-scope))
-      (`(untracked     ,_) (magit-stage-untracked intent))
-      (`(unstaged  region) (magit-apply-region it "--cached"))
-      (`(unstaged    hunk) (magit-apply-hunk   it "--cached"))
-      (`(unstaged   hunks) (magit-apply-hunks  it "--cached"))
-      (`(unstaged    file) (magit-stage-1 "-u" (list (magit-section-value it))))
-      (`(unstaged   files) (magit-stage-1 "-u" (magit-region-values)))
-      (`(unstaged    list) (magit-stage-1 "-u"))
-      (`(staged        ,_) (user-error "Already staged"))
-      (`(committed     ,_) (user-error "Cannot stage committed changes"))
-      (`(undefined     ,_) (user-error "Cannot stage this change")))))
+  (--if-let (and (derived-mode-p 'magit-mode) (magit-apply--get-selection))
+      (pcase (list (magit-diff-type) (magit-diff-scope))
+        (`(untracked     ,_) (magit-stage-untracked intent))
+        (`(unstaged  region) (magit-apply-region it "--cached"))
+        (`(unstaged    hunk) (magit-apply-hunk   it "--cached"))
+        (`(unstaged   hunks) (magit-apply-hunks  it "--cached"))
+        (`(unstaged    file) (magit-stage-1 "-u" (list (magit-section-value it))))
+        (`(unstaged   files) (magit-stage-1 "-u" (magit-region-values nil t)))
+        (`(unstaged    list) (magit-stage-modified))
+        (`(staged        ,_) (user-error "Already staged"))
+        (`(committed     ,_) (user-error "Cannot stage committed changes"))
+        (`(undefined     ,_) (user-error "Cannot stage this change")))
+    (call-interactively 'magit-stage-file)))
 
 ;;;###autoload
 (defun magit-stage-file (file)
@@ -218,7 +226,7 @@ requiring confirmation."
   (interactive
    (let* ((atpoint (magit-section-when (file)))
           (current (magit-file-relative-name))
-          (choices (nconc (magit-modified-files)
+          (choices (nconc (magit-unstaged-files)
                           (magit-untracked-files)))
           (default (car (member (or atpoint current) choices))))
      (list (if (or current-prefix-arg (not default))
@@ -234,12 +242,11 @@ requiring confirmation."
 Stage all new content of tracked files and remove tracked files
 that no longer exist in the working tree from the index also.
 With a prefix argument also stage previously untracked (but not
-ignored) files.
-\('git add --update|--all .')."
-  (interactive (progn (unless (or (not (magit-anything-staged-p))
-                                  (magit-confirm 'stage-all-changes))
-                        (user-error "Abort"))
-                      (list current-prefix-arg)))
+ignored) files."
+  (interactive "P")
+  (when (magit-anything-staged-p)
+    (unless (magit-confirm 'stage-all-changes)
+      (user-error "Abort")))
   (magit-with-toplevel
     (magit-stage-1 (if all "--all" "-u"))))
 
@@ -254,11 +261,12 @@ ignored) files.
   (let* ((section (magit-current-section))
          (files (pcase (magit-diff-scope)
                   (`file  (list (magit-section-value section)))
-                  (`files (magit-region-values))
+                  (`files (magit-region-values nil t))
                   (`list  (magit-untracked-files))))
          plain repos)
     (dolist (file files)
-      (if (magit-git-repo-p file t)
+      (if (and (not (file-symlink-p file))
+               (magit-git-repo-p file t))
           (push file repos)
         (push file plain)))
     (magit-wip-commit-before-change files " before stage")
@@ -275,9 +283,10 @@ ignored) files.
         (magit-submodule-add
          (let ((default-directory
                  (file-name-as-directory (expand-file-name repo))))
-           (magit-get "remote" (or (magit-get-remote) "origin") "url"))
+           (or (magit-get "remote" (or (magit-get-remote) "origin") "url")
+               (concat (file-name-as-directory ".") repo)))
          repo
-         (magit-submodule-read-name repo))))
+         (magit-submodule-read-name-for-path repo))))
     (magit-wip-commit-after-apply files " after stage")))
 
 ;;;; Unstage
@@ -293,7 +302,7 @@ ignored) files.
       (`(staged      hunk) (magit-apply-hunk   it "--reverse" "--cached"))
       (`(staged     hunks) (magit-apply-hunks  it "--reverse" "--cached"))
       (`(staged      file) (magit-unstage-1 (list (magit-section-value it))))
-      (`(staged     files) (magit-unstage-1 (magit-region-values)))
+      (`(staged     files) (magit-unstage-1 (magit-region-values nil t)))
       (`(staged      list) (magit-unstage-all))
       (`(committed     ,_) (if magit-unstage-committed
                                (magit-reverse-in-index)
@@ -329,12 +338,13 @@ without requiring confirmation."
 (defun magit-unstage-all ()
   "Remove all changes from the staging area."
   (interactive)
-  (when (or (and (not (magit-anything-unstaged-p))
-                 (not (magit-untracked-files)))
-            (magit-confirm 'unstage-all-changes))
-    (magit-wip-commit-before-change nil " before unstage")
-    (magit-run-git "reset" "HEAD" "--")
-    (magit-wip-commit-after-apply nil " after unstage")))
+  (when (or (magit-anything-unstaged-p)
+            (magit-untracked-files))
+    (unless (magit-confirm 'unstage-all-changes)
+      (user-error "Abort")))
+  (magit-wip-commit-before-change nil " before unstage")
+  (magit-run-git "reset" "HEAD" "--")
+  (magit-wip-commit-after-apply nil " after unstage"))
 
 ;;;; Discard
 
@@ -452,8 +462,9 @@ without requiring confirmation."
     (let ((delete-by-moving-to-trash magit-delete-by-moving-to-trash))
       (dolist (file files)
         (if (memq (magit-diff-type) '(unstaged untracked))
-            (dired-delete-file file dired-recursive-deletes
-                               magit-delete-by-moving-to-trash)
+            (progn (dired-delete-file file dired-recursive-deletes
+                                      magit-delete-by-moving-to-trash)
+                   (dired-clean-up-after-deletion file))
           (pcase (nth 3 (assoc file status))
             (?  (delete-file file t)
                 (magit-call-git "rm" "--cached" "--" file))
@@ -477,7 +488,10 @@ without requiring confirmation."
     (dolist (file files)
       (let ((orig (cadr (assoc file status))))
         (if (file-exists-p file)
-            (magit-call-git "mv" file orig)
+            (progn
+              (--when-let (file-name-directory orig)
+                (make-directory it t))
+              (magit-call-git "mv" file orig))
           (magit-call-git "rm" "--cached" "--" file)
           (magit-call-git "reset" "--" orig))))))
 
@@ -501,7 +515,7 @@ without requiring confirmation."
                 (sections
                  (magit-discard-apply-n sections 'magit-apply-diffs)))
           (when binaries
-            (let ((modified (magit-modified-files t)))
+            (let ((modified (magit-unstaged-files t)))
               (setq binaries (--separate (member it modified) binaries)))
             (when (cadr binaries)
               (magit-call-git "reset" "--" (cadr binaries)))
@@ -583,9 +597,5 @@ a separate commit.  A typical workflow would be:
   (interactive)
   (magit-reverse (cons "--cached" args)))
 
-;;; magit-apply.el ends soon
 (provide 'magit-apply)
-;; Local Variables:
-;; indent-tabs-mode: nil
-;; End:
 ;;; magit-apply.el ends here

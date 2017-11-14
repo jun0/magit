@@ -1,6 +1,6 @@
 ;;; magit-section.el --- section functionality  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2010-2016  The Magit Project Contributors
+;; Copyright (C) 2010-2017  The Magit Project Contributors
 ;;
 ;; You should have received a copy of the AUTHORS.md file which
 ;; lists all contributors.  If not, see http://magit.vc/authors.
@@ -24,7 +24,7 @@
 ;;; Commentary:
 
 ;; This library implements "sections" as used in all Magit buffers.
-;; If you have used Magit before then you probably know what that
+;; If you have used Magit before, then you probably know what that
 ;; means, otherwise think "read-only Org-Mode for Git", kinda.
 
 ;;; Code:
@@ -34,16 +34,19 @@
 
 (require 'magit-utils)
 
+(declare-function magit-maybe-make-margin-overlay 'magit-log)
 (defvar magit-keep-region-overlay)
 
 ;;; Options
 
 (defgroup magit-section nil
   "Expandable sections."
+  :link '(info-link "(magit)Sections")
   :group 'magit)
 
 (defcustom magit-section-show-child-count t
-  "Whether to append the number of children to section headings."
+  "Whether to append the number of children to section headings.
+This only applies to sections for which doing so makes sense."
   :package-version '(magit . "2.1.0")
   :group 'magit-section
   :type 'boolean)
@@ -95,7 +98,7 @@ diff-related sections being the only exception."
     magit-section-set-visibility-from-cache)
   "Hook used to set the initial visibility of a section.
 Stop at the first function that returns non-nil.  The value
-should be `show' or `hide'.  If no function returns non-nil
+should be `show' or `hide'.  If no function returns non-nil,
 determine the visibility as usual, i.e. use the hardcoded
 section specific default (see `magit-insert-section')."
   :package-version '(magit . "2.4.0")
@@ -269,7 +272,7 @@ If there is no previous sibling section, then move to the parent."
     (set-window-start (selected-window) (magit-section-start section))))
 
 (defun magit-hunk-set-window-start (section)
-  "Ensure the beginning of the `hunk' SECTION is visible.
+  "When SECTION is a `hunk', ensure that its beginning is visible.
 It the SECTION has a different type, then do nothing."
   (when (eq (magit-section-type section) 'hunk)
     (magit-section-set-window-start section)))
@@ -330,7 +333,9 @@ With a prefix argument also expand it." heading)
         (remove-overlays beg end 'invisible t)
         (let ((o (make-overlay beg end)))
           (overlay-put o 'evaporate t)
-          (overlay-put o 'invisible t))))))
+          (overlay-put o 'invisible t))))
+    (when (memq (magit-section-type section) '(unpulled unpushed))
+      (magit-section-cache-visibility section))))
 
 (defun magit-section-toggle (section)
   "Toggle visibility of the body of the current section."
@@ -347,7 +352,7 @@ With a prefix argument also expand it." heading)
   (interactive (list (magit-current-section)))
   (goto-char (magit-section-start section))
   (let* ((children (magit-section-children section))
-         (show (-any? 'magit-section-hidden children)))
+         (show (-any-p 'magit-section-hidden children)))
     (dolist (c children)
       (setf (magit-section-hidden c) show)))
   (magit-section-show section))
@@ -397,10 +402,10 @@ hidden."
       (progn (magit-section-show section)
              (magit-section-hide-children section))
     (let ((children (magit-section-children section)))
-      (cond ((and (-any? 'magit-section-hidden   children)
-                  (-any? 'magit-section-children children))
+      (cond ((and (-any-p 'magit-section-hidden   children)
+                  (-any-p 'magit-section-children children))
              (magit-section-show-headings section))
-            ((-any? 'magit-section-hidden-body children)
+            ((-any-p 'magit-section-hidden-body children)
              (magit-section-show-children section))
             (t
              (magit-section-hide section))))))
@@ -409,10 +414,10 @@ hidden."
   "Cycle visibility of all sections in the current buffer."
   (interactive)
   (let ((children (magit-section-children magit-root-section)))
-    (cond ((and (-any? 'magit-section-hidden   children)
-                (-any? 'magit-section-children children))
+    (cond ((and (-any-p 'magit-section-hidden   children)
+                (-any-p 'magit-section-children children))
            (magit-section-show-headings magit-root-section))
-          ((-any? 'magit-section-hidden-body children)
+          ((-any-p 'magit-section-hidden-body children)
            (magit-section-show-children magit-root-section))
           (t
            (mapc 'magit-section-hide children)))))
@@ -432,22 +437,22 @@ hidden."
                     ((derived-mode-p 'magit-diff-mode)
                      (--filter (eq (magit-section-type it) 'file)
                                (magit-section-children magit-root-section)))))
-    (if (-any? 'magit-section-hidden sections)
+    (if (-any-p 'magit-section-hidden sections)
         (dolist (s sections)
           (magit-section-show s)
           (magit-section-hide-children s))
       (let ((children (-mapcat 'magit-section-children sections)))
-        (cond ((and (-any? 'magit-section-hidden   children)
-                    (-any? 'magit-section-children children))
+        (cond ((and (-any-p 'magit-section-hidden   children)
+                    (-any-p 'magit-section-children children))
                (mapc 'magit-section-show-headings sections))
-              ((-any? 'magit-section-hidden-body children)
+              ((-any-p 'magit-section-hidden-body children)
                (mapc 'magit-section-show-children sections))
               (t
                (mapc 'magit-section-hide sections)))))))
 
 (defun magit-section-hidden-body (section &optional pred)
   (--if-let (magit-section-children section)
-      (funcall (or pred '-any?) 'magit-section-hidden-body it)
+      (funcall (or pred '-any-p) 'magit-section-hidden-body it)
     (and (magit-section-content section)
          (magit-section-hidden  section))))
 
@@ -461,7 +466,7 @@ SECTION's body (and heading) obviously cannot be visible."
 
 (defun magit-section-show-level (level)
   "Show surrounding sections up to LEVEL.
-If LEVEL is negative show up to the absolute value.
+If LEVEL is negative, show up to the absolute value.
 Sections at higher levels are hidden."
   (if (< level 0)
       (let ((s (magit-current-section)))
@@ -531,60 +536,76 @@ This command is intended for debugging purposes."
 
 ;;; Match
 
-(defun magit-section-match (condition &optional section)
+(cl-defun magit-section-match
+    (condition &optional (section (magit-current-section)))
   "Return t if SECTION matches CONDITION.
-SECTION defaults to the section at point.
 
-Conditions can take the following forms:
+SECTION defaults to the section at point.  If SECTION is not
+specified and there also is no section at point, then return
+nil.
+
+CONDITION can take the following forms:
   (CONDITION...)  matches if any of the CONDITIONs matches.
   [TYPE...]       matches if the first TYPE matches the type
-                  of the section at point, the second matches
-                  that of its parent, and so on.
+                  of the section, the second matches that of
+                  its parent, and so on.
   [* TYPE...]     matches sections that match [TYPE...] and
                   also recursively all their child sections.
-  TYPE            matches TYPE regardless of its parents.
+  TYPE            matches sections of TYPE regardless of the
+                  types of the parent sections.
 
 Each TYPE is a symbol.  Note that it is not necessary to specify
 all TYPEs up to the root section as printed by
 `magit-describe-type', unless of course you want to be that
 precise."
-  ;; When recursing SECTION actually is a type list.  Matching
-  ;; macros also pass such a list instead of a section struct.
-  (let ((types (if (magit-section-p section)
-                   (mapcar 'car (magit-section-ident section))
-                 section)))
-    (when (or types section (magit-current-section))
-      (if (listp condition)
-          (--first (magit-section-match it types) condition)
-        (magit-section-match-1 (if (symbolp condition)
-                                   (list condition)
-                                 (append condition nil))
-                               types)))))
+  ;; For backward compatibility reasons SECTION can also be a
+  ;; type-list as understood by `magit-section-match-1'.  This
+  ;; includes uses of the macros `magit-section-when' and
+  ;; `magit-section-case' that did not get recompiled after
+  ;; this function was changed.
+  (and section
+       (magit-section-match-1 condition
+                              (if (magit-section-p section)
+                                  (mapcar #'car (magit-section-ident section))
+                                section))))
 
-(defun magit-section-match-1 (l1 l2)
+(defun magit-section-match-1 (condition type-list)
+  (if (listp condition)
+      (--first (magit-section-match-1 it type-list) condition)
+    (magit-section-match-2 (if (symbolp condition)
+                               (list condition)
+                             (append condition nil))
+                           type-list)))
+
+(defun magit-section-match-2 (l1 l2)
   (or (null l1)
       (if (eq (car l1) '*)
-          (or (magit-section-match-1 (cdr l1) l2)
+          (or (magit-section-match-2 (cdr l1) l2)
               (and l2
-                   (magit-section-match-1 l1 (cdr l2))))
+                   (magit-section-match-2 l1 (cdr l2))))
         (and l2
              (equal (car l1) (car l2))
-             (magit-section-match-1 (cdr l1) (cdr l2))))))
+             (magit-section-match-2 (cdr l1) (cdr l2))))))
 
 (defmacro magit-section-when (condition &rest body)
-  "If the section at point matches CONDITION evaluate BODY.
+  "If the section at point matches CONDITION, evaluate BODY.
 
-If the section matches evaluate BODY forms sequentially and
-return the value of the last one, or if there are no BODY forms
-return the value of the section.  If the section does not match
-return nil.
+If the section matches, then evaluate BODY forms sequentially
+with `it' bound to the section and return the value of the last
+form.  If there are no BODY forms, then return the value of the
+section.  If the section does not match or if there is no section
+at point, then return nil.
 
 See `magit-section-match' for the forms CONDITION can take."
   (declare (indent 1)
            (debug (sexp body)))
   `(--when-let (magit-current-section)
-     (when (magit-section-match ',condition
-                                (mapcar 'car (magit-section-ident it)))
+     ;; Quoting CONDITION here often leads to double-quotes, which
+     ;; isn't an issue because `magit-section-match-1' implicitly
+     ;; deals with that.  We shouldn't force users of this function
+     ;; to not quote CONDITION because that would needlessly break
+     ;; backward compatibility.
+     (when (magit-section-match ',condition it)
        ,@(or body '((magit-section-value it))))))
 
 (defmacro magit-section-case (&rest clauses)
@@ -595,7 +616,7 @@ section is compared against each CONDITION; the BODY forms of the
 first match are evaluated sequentially and the value of the last
 form is returned.  Inside BODY the symbol `it' is bound to the
 section at point.  If no clause succeeds or if there is no
-section at point return nil.
+section at point, return nil.
 
 See `magit-section-match' for the forms CONDITION can take.
 Additionally a CONDITION of t is allowed in the final clause, and
@@ -608,7 +629,7 @@ at point."
             (,ident (and it (mapcar 'car (magit-section-ident it)))))
        (cond ,@(mapcar (lambda (clause)
                          `(,(or (eq (car clause) t)
-                                `(and it (magit-section-match
+                                `(and it (magit-section-match-1
                                           ',(car clause) ,ident)))
                            ,@(cdr clause)))
                        clauses)))))
@@ -749,7 +770,7 @@ The `content' property of the section struct is the end of the
 heading (which lasts from `start' to `content') and the beginning
 of the the body (which lasts from `content' to `end').  If the
 value of `content' is nil, then the section has no heading and
-its body cannot be collapsed.  If a section does have a heading
+its body cannot be collapsed.  If a section does have a heading,
 then its height must be exactly one line, including a trailing
 newline character.  This isn't enforced, you are responsible for
 getting it right.  The only exception is that this function does
@@ -757,14 +778,16 @@ insert a newline character if necessary."
   (declare (indent defun))
   (when args
     (let ((heading (apply #'concat args)))
-      (insert (if (next-single-property-change 0 'face (concat "0" heading))
+      (insert (if (text-property-not-all 0 (length heading) 'face nil heading)
                   heading
                 (propertize heading 'face 'magit-section-heading)))))
   (unless (bolp)
     (insert ?\n))
+  (magit-maybe-make-margin-overlay)
   (setf (magit-section-content magit-insert-section--current) (point-marker)))
 
-(defvar magit-insert-headers-hook nil "For internal use only.")
+(defvar magit-insert-headers--hook nil "For internal use only.")
+(defvar magit-insert-headers--beginning nil "For internal use only.")
 
 (defun magit-insert-headers (hooks)
   (let ((magit-insert-section-hook
@@ -772,18 +795,19 @@ insert a newline character if necessary."
                (if (listp magit-insert-section-hook)
                    magit-insert-section-hook
                  (list magit-insert-section-hook))))
-        (magit-insert-headers-hook hooks)
+        (magit-insert-headers--hook hooks)
         wrapper)
-    (while (and (setq wrapper (pop magit-insert-headers-hook))
-                (= (point) (point-min)))
+    (setq magit-insert-headers--beginning (point))
+    (while (and (setq wrapper (pop magit-insert-headers--hook))
+                (= (point) magit-insert-headers--beginning))
       (funcall wrapper))))
 
 (defun magit-insert-remaining-headers ()
-  (if (= (point) (point-min))
+  (if (= (point) magit-insert-headers--beginning)
       (magit-cancel-section)
     (magit-insert-heading)
     (remove-hook 'magit-insert-section-hook 'magit-insert-remaining-headers)
-    (mapc #'funcall magit-insert-headers-hook)
+    (mapc #'funcall magit-insert-headers--hook)
     (insert "\n")))
 
 (defun magit-insert-child-count (section)
@@ -815,7 +839,11 @@ evaluated its BODY.  Admittedly that's a bit of a hack."
 (defvar-local magit-section-unhighlight-sections nil)
 
 (defun magit-section-update-region (_)
-  ;; Don't show complete region.  Highlighting emphasizes headings.
+  "When the region is a valid section-selection, highlight them all."
+  ;; At least that's what it does conceptually.  In actuality it just
+  ;; returns a list of those sections, and it doesn't even matter if
+  ;; this is a member of `magit-region-highlight-hook'.  It probably
+  ;; should be removed, but I want to make sure before removing it.
   (magit-region-sections))
 
 (defun magit-section-update-highlight ()
@@ -825,9 +853,10 @@ evaluated its BODY.  Admittedly that's a bit of a hack."
             (deactivate-mark nil)
             (selection (magit-region-sections)))
         (mapc #'delete-overlay magit-section-highlight-overlays)
+        (setq magit-section-highlight-overlays nil)
         (setq magit-section-unhighlight-sections
-              magit-section-highlighted-sections
-              magit-section-highlighted-sections nil)
+              magit-section-highlighted-sections)
+        (setq magit-section-highlighted-sections nil)
         (unless (eq section magit-root-section)
           (run-hook-with-args-until-success
            'magit-section-highlight-hook section selection))
@@ -841,7 +870,7 @@ evaluated its BODY.  Admittedly that's a bit of a hack."
       (setq deactivate-mark nil))))
 
 (defun magit-section-highlight (section selection)
-  "Highlight SECTION and if non-nil all SELECTION.
+  "Highlight SECTION and if non-nil all sections in SELECTION.
 This function works for any section but produces undesirable
 effects for diff related sections, which by default are
 highlighted using `magit-diff-highlight'.  Return t."
@@ -857,8 +886,8 @@ highlighted using `magit-diff-highlight'.  Return t."
   t)
 
 (defun magit-section-highlight-selection (_ selection)
-  "Highlight the section selection region.
-If SELECTION is non-nil then it is a list of sections selected by
+  "Highlight the section-selection region.
+If SELECTION is non-nil, then it is a list of sections selected by
 the region.  The headings of these sections are then highlighted.
 
 This is a fallback for people who don't want to highlight the
@@ -869,7 +898,8 @@ This function is necessary to ensure that a representation of
 such a region is visible.  If neither of these functions were
 part of the hook variable, then such a region would be
 invisible."
-  (when selection
+  (when (and selection
+             (not (and (eq this-command 'mouse-drag-region))))
     (--each selection
       (magit-section-make-overlay (magit-section-start it)
                                   (or (magit-section-content it)
@@ -911,9 +941,10 @@ invisible."
                         (previous (nth (length siblings) children)))
                    (if (not arg)
                        (--when-let (or previous (car (last children)))
-                         (goto-char (magit-section-start it)))
+                         (magit-section-goto it)
+                         t)
                      (when previous
-                       (goto-char (magit-section-start previous)))
+                       (magit-section-goto previous))
                      (if (and (stringp arg)
                               (re-search-forward
                                arg (magit-section-end parent) t))
@@ -1004,9 +1035,9 @@ either `hide' or nil."
 (defun magit-section-siblings (section &optional direction)
   "Return a list of the sibling sections of SECTION.
 
-If optional DIRECTION is `prev' then return siblings that come
-before SECTION, if it is `next' then return siblings that come
-after SECTION.  For all other values return all siblings
+If optional DIRECTION is `prev', then return siblings that come
+before SECTION.  If it is `next', then return siblings that come
+after SECTION.  For all other values, return all siblings
 excluding SECTION itself."
   (-when-let (parent (magit-section-parent section))
     (let ((siblings  (magit-section-children parent)))
@@ -1015,7 +1046,7 @@ excluding SECTION itself."
         (`next  (cdr (member section siblings)))
         (_      (remq section siblings))))))
 
-(defun magit-region-values (&rest types)
+(defun magit-region-values (&optional types multiple)
   "Return a list of the values of the selected sections.
 
 Also see `magit-region-sections' whose doc-string explains when a
@@ -1024,36 +1055,43 @@ or is not a valid section selection, then return nil.  If optional
 TYPES is non-nil then the selection not only has to be valid; the
 types of all selected sections additionally have to match one of
 TYPES, or nil is returned."
-  (mapcar 'magit-section-value (apply 'magit-region-sections types)))
+  (mapcar #'magit-section-value (magit-region-sections types multiple)))
 
-(defun magit-region-sections (&rest types)
+(defun magit-region-sections (&optional types multiple)
   "Return a list of the selected sections.
 
 When the region is active and constitutes a valid section
 selection, then return a list of all selected sections.  This is
 the case when the region begins in the heading of a section and
-ends in the heading of a sibling of that first section.  When
-the selection is not valid then return nil.  Most commands that
-can act on the selected sections, then instead just act on the
-current section, the one point is in.
+ends in the heading of the same section or in that of a sibling
+section.  If optional MULTIPLE is non-nil, then the region cannot
+begin and end in the same section.
+
+When the selection is not valid, then return nil.  In this case,
+most commands that can act on the selected sections will instead
+act on the section at point.
 
 When the region looks like it would in any other buffer then
 the selection is invalid.  When the selection is valid then the
-region uses the `magit-section-highlight'.  This does not apply
-to diffs were things get a bit more complicated, but even here
-if the region looks like it usually does, then that's not a
-valid selection as far as this function is concerned.
+region uses the `magit-section-highlight' face.  This does not
+apply to diffs where things get a bit more complicated, but even
+here if the region looks like it usually does, then that's not
+a valid selection as far as this function is concerned.
 
-If optional TYPES is non-nil then the selection not only has to
-be valid; the types of all selected sections additionally have to
-match one of TYPES, or nil is returned."
-  (when (use-region-p)
+If optional TYPES is non-nil, then the selection not only has to
+be valid; the types of all selected sections additionally have
+to match one of TYPES, or nil is returned.  TYPES can also be a
+single type, instead of a list of types."
+  (when (region-active-p)
     (let* ((rbeg (region-beginning))
            (rend (region-end))
            (sbeg (get-text-property rbeg 'magit-section))
            (send (get-text-property rend 'magit-section)))
-      (unless (memq send (list sbeg magit-root-section nil))
-        (let ((siblings (magit-section-siblings sbeg 'next)) sections)
+      (when (and send
+                 (not (eq send magit-root-section))
+                 (not (and multiple (eq send sbeg))))
+        (let ((siblings (cons sbeg (magit-section-siblings sbeg 'next)))
+              sections)
           (when (and (memq send siblings)
                      (magit-section-position-in-heading-p sbeg rbeg)
                      (magit-section-position-in-heading-p send rend))
@@ -1061,14 +1099,23 @@ match one of TYPES, or nil is returned."
               (push (car siblings) sections)
               (when (eq (pop siblings) send)
                 (setq siblings nil)))
-            (setq sections (cons sbeg (nreverse sections)))
+            (setq sections (nreverse sections))
+            (when (and types (symbolp types))
+              (setq types (list types)))
             (when (or (not types)
                       (--all-p (memq (magit-section-type it) types) sections))
               sections)))))))
 
-(defun magit-section-position-in-heading-p (section pos)
-  "Return t if POSITION is inside the heading of SECTION."
-  (and (>= pos (magit-section-start section))
+(defun magit-section-position-in-heading-p (&optional section pos)
+  "Return t if POSITION is inside the heading of SECTION.
+POSITION defaults to point and SECTION defaults to the
+current section."
+  (unless section
+    (setq section (magit-current-section)))
+  (unless pos
+    (setq pos (point)))
+  (and section
+       (>= pos (magit-section-start section))
        (<  pos (or (magit-section-content section)
                    (magit-section-end section)))
        t))
@@ -1085,6 +1132,27 @@ If optional SECTION is nil, use the current section."
                 (magit-section-position-in-heading-p section (region-end))))
        t))
 
+(defun magit-section--backward-protected ()
+  "Move to the beginning of the current or the previous visible section.
+Same as `magit-section-backward' but for non-interactive use.
+Suppress `magit-section-movement-hook', and return a boolean to
+indicate whether a section was found, instead of raising an error
+if not."
+  (condition-case nil
+      (let ((magit-section-movement-hook nil))
+        (magit-section-backward)
+        t)
+    (user-error nil)))
+
+(defun magit-section--backward-find (predicate)
+  "Move to the first previous section satisfying PREDICATE.
+PREDICATE does not take any parameter and should not move
+point."
+  (let (found)
+    (while (and (setq found (magit-section--backward-protected))
+                (not (funcall predicate))))
+    found))
+
 (defun magit-wash-sequence (function)
   "Repeatedly call FUNCTION until it returns nil or eob is reached.
 FUNCTION has to move point forward or return nil."
@@ -1095,7 +1163,7 @@ FUNCTION has to move point forward or return nil."
 
 Add FUNCTION at the beginning of the hook list unless optional
 APPEND is non-nil, in which case FUNCTION is added at the end.
-If FUNCTION already is a member then move it to the new location.
+If FUNCTION already is a member, then move it to the new location.
 
 If optional AT is non-nil and a member of the hook list, then
 add FUNCTION next to that instead.  Add before or after AT, or
@@ -1147,9 +1215,20 @@ again use `remove-hook'."
         (set hook value)
       (set-default hook value))))
 
-;;; magit-section.el ends soon
+(defun magit-run-section-hook (hook)
+  "Run HOOK, warning about invalid entries."
+  (--if-let (-remove #'functionp (symbol-value hook))
+      (progn
+        (message "`%s' contains entries that are no longer valid.
+%s\nUsing standard value instead.  Please re-configure hook variable."
+                 hook
+                 (mapconcat (lambda (sym) (format "  `%s'" sym)) it "\n"))
+        (sit-for 5)
+        (defvar magit--hook-standard-value nil)
+        (let ((magit--hook-standard-value
+               (eval (car (get hook 'standard-value)))))
+          (run-hooks 'magit---hook-standard-value)))
+    (run-hooks hook)))
+
 (provide 'magit-section)
-;; Local Variables:
-;; indent-tabs-mode: nil
-;; End:
 ;;; magit-section.el ends here
