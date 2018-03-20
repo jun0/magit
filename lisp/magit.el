@@ -425,7 +425,7 @@ With a prefix argument also reset the working tree.
 ;;;; Ad-hoc manipulation
 
 ;;;###autoload
-(defun magit-update-ref-head (tag dest)
+(defun magit-update-refs-heads (tag dest)
   "Just like update-ref <branch> <commit>, but automatically prefixes
 <branch> with refs/heads/ to avoid trouble."
   (interactive (list (magit-read-local-branch-or-ref "Ref to move")
